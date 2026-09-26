@@ -1713,6 +1713,8 @@ static int f2fs_do_zero_range(struct dnode_of_data *dn, pgoff_t start,
 	unsigned int ofs_in_node = dn->ofs_in_node;
 	blkcnt_t count = 0;
 	int ret;
+	block_t blkstart = 0;
+	unsigned int blklen = 0;
 
 	for (; index < end; index++, dn->ofs_in_node++) {
 		if (f2fs_data_blkaddr(dn) == NULL_ADDR)
@@ -1739,15 +1741,29 @@ static int f2fs_do_zero_range(struct dnode_of_data *dn, pgoff_t start,
 		if (dn->data_blkaddr == NEW_ADDR)
 			continue;
 
+		/*
+		 * Flush before validation so a repeated block address
+		 * can be detected through the SIT bitmap.
+		 */
+		if (blklen && blkstart + blklen != dn->data_blkaddr) {
+			f2fs_invalidate_blocks(sbi, blkstart, blklen);
+			blklen = 0;
+		}
+
 		if (!f2fs_is_valid_blkaddr(sbi, dn->data_blkaddr,
 					DATA_GENERIC_ENHANCE)) {
 			ret = -EFSCORRUPTED;
 			break;
 		}
 
-		f2fs_invalidate_blocks(sbi, dn->data_blkaddr, 1);
+		if (!blklen)
+			blkstart = dn->data_blkaddr;
+		blklen++;
 		f2fs_set_data_blkaddr(dn, NEW_ADDR);
 	}
+
+	if (blklen)
+		f2fs_invalidate_blocks(sbi, blkstart, blklen);
 
 	if (index > start) {
 		f2fs_update_read_extent_cache_range(dn, start, 0,
